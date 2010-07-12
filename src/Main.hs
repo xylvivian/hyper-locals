@@ -84,6 +84,9 @@ dbSelect tbl x i = dbQuery
 dbGet tbl x id = errorHead "Does not exist." .
   dbSelect tbl x "id = ?" [id]
 
+dbSearch tbl =
+  dbSelect tbl 
+
 dbInsert tbl flds = dbRun
   ( "INSERT INTO " ++ tbl ++
     tuplify flds ++ " VALUES " ++
@@ -174,6 +177,8 @@ fetch = do
   (id, fmt) <- getArg
   r <- dbGet (table ctg) "*" id
   writeBS $ showBS r -- Needs correct formatting.
+
+search = undefined
 --
 
 -- POST functions:
