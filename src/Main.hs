@@ -84,9 +84,6 @@ dbSelect tbl x i = dbQuery
 dbGet tbl x id = errorHead "Does not exist." .
   dbSelect tbl x "id = ?" [id]
 
-dbSearch tbl =
-  dbSelect tbl 
-
 dbInsert tbl flds = dbRun
   ( "INSERT INTO " ++ tbl ++
     tuplify flds ++ " VALUES " ++
@@ -240,7 +237,7 @@ site =
       , ("styles", fileServe "styles")
       , ("signup", fileServeSingle "pages/signup.html")
       , (":ctg/:arg", fetch)
-      , (":ctg", search)
+--      , (":ctg", search)
       ]) <|>
   method POST  -- Create.
     (route
