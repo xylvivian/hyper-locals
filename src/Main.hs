@@ -262,8 +262,8 @@ site =
 -- The Websocket server:
 wsConf = Config
   { configPort = 10000
-  , configOrigins = []
-  , configDomains = []
+  , configOrigins = Nothing
+  , configDomains = Nothing
   , configOnOpen = wsOpen
   , configOnMessage = wsMessage
   , configOnClose = wsClose
