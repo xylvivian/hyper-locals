@@ -3,12 +3,70 @@
     <title>New User</title>
   </head>
   <body>
-    <form>
-      <input type="text" name="email"/>
-      <input type="password" name="password1"/>
-      <input type="password" name="password2"/>
+    <form id="new_user_form">
+      Nick: <input type="text" name="id"/>
+      <div></div>
+      Email: <input type="text" name="email"/>
+      <div></div>
+      Phone: <input type="text" name="phone"/>
+      <div></div>
+      Birthday: <input type="text" name="birthday"/>
+      <div></div>
+      Sex: <input type="text" name="sex"/>
+      <div></div>
+      Password: <input type="password" name="password1"/>
+      <div id="pass_len"></div>
+      Repeat password: <input type="password" name="password2"/>
+      <div id="pass_eq"></div>
       <textarea rows=4 cols=20 name="about">Describe yourself here.</textarea>
+      <div></div>
       <input type="submit" value="Submit"/>
     </form>
+    <script type="text/javascript" src="http://code.jquery.com/jquery-1.4.2.min.js"></script>
+    <script type="text/javascript">
+      var form = $("#new_user_form");
+      var p1 = $("[name=password1]");
+      var p2 = $("[name=password2]");
+
+      var pass_len = function() {
+        var st = $("#pass_len");
+        ok = p1[0].value.length > 5;
+        if (ok) {
+          st.text("");
+        } else {
+          st.text("Password needs to be at least 6 characters long.");
+        }
+        return ok;
+      }
+
+      var pass_eq = function() {
+        var st = $("#pass_eq");
+        ok = p1[0].value == p2[0].value;
+        if (ok) {
+          st.text("");
+        } else {
+          st.text("Entered passwords do not match.");
+        }
+        return ok;
+      }
+
+      var check = function() {
+        return pass_eq() && pass_len() && nick();
+      }
+
+      p1.change(pass_len);
+      p1.change(pass_eq);
+      p2.change(pass_eq);
+
+      form.submit(function() {
+        var data = form.serialize();
+        data += "&password=" + p1[0].value;
+        $.post("user", data, function(response) {
+          alert(response + "GOT BACK");
+        });
+        alert(data);
+        return false;
+      });
+    </script>
   </body>
 </html>

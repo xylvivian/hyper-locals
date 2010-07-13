@@ -17,6 +17,7 @@ import qualified Data.List as L
 import Data.Maybe
 import Network.Websocket
 import Control.Concurrent
+import Debug.Trace
 import Control.Exception
 
 import Glue
@@ -33,7 +34,16 @@ unpack = B.unpack
 
 showBS = pack . show
 
-assertM x = assert x $ return ()
+snapAssert n s x t = if x
+  then return ()
+  else do
+    putResponse $ setResponseStatus n s emptyResponse
+    writeBS t
+    getResponse >>= finishWith
+
+svAssert = snapAssert 500 "Internal Server Error"
+
+rqAssert = snapAssert 400 "Bad Request"
 
 errorHead s [] = error s
 errorHead _ (x : _) = x
@@ -68,12 +78,14 @@ commafy = concat . L.intersperse ", "
 
 tuplify xs = "(" ++ commafy xs ++ ")"
 
-dbFunc f cmd = liftIO . f ?db cmd . map toSql
+dbFunc f cmd = liftIO . handleSql (\e -> do
+  putStrLn "what the fuck"
+  return undefined) . f ?db cmd . map toSql
 
 dbRun cmd vals = do
   r <- dbFunc run cmd vals
-  assert (r >= 1) $
-    liftIO $ commit ?db
+  svAssert (r >= 1) "Database transaction failed."
+  liftIO $ commit ?db
 
 dbQuery = dbFunc quickQuery'
 
@@ -102,18 +114,20 @@ dbDelete tbl id = dbRun
 
 permit ctg id nick = do
   poster <- dbGet (table ctg) "poster" id
-  assertM
+  rqAssert
     ( ( ctg == User &&
         nick == id ) ||
       ( ctg /= User &&
-        nick == fromSql (errorHead "No 'poster' field." poster ) ) )
+        nick == fromSql (errorHead "No 'poster' field." poster) )
+    ) "Operation not permitted."
 
 identify = do
   nick <- getCookieValue "nick"
   pass <- getCookieValue "pass"
   [id, password] <- dbGet "users" "(id, password)" nick
-  assert (fromSql id /= nick || fromSql password /= pass) $
-    return nick
+  rqAssert (fromSql id /= nick || fromSql password /= pass)
+    "Identification failed."
+  return nick
 
 getTheGist = do
   ctg <- getCategory
@@ -142,26 +156,28 @@ instance InDatabase Category where
   table User = "users"
   table Want = "wants"
   table Have = "haves"
+  -- NOTE: One HAS to make sure that these fields
+  -- match the columns described in init_db.sql
   columns User =
-    [ "nick"
-    , "upvotes"
-    , "downvotes"
-    , "birthday"
-    , "sex"
-    , "locations"
+    [ "id"
     , "email"
     , "phone"
+    , "birthday"
+    , "sex"
     , "password"
     , "about"
+    , "locations" --TODO: allow for location input
     ]
   columns Want =
-    [ "keyword"
+    [ "poster"
+    , "keywords"
     , "details"
     , "highprice"
     , "lowprice"
     ]
   columns Have =
-    [ "title"
+    [ "poster"
+    , "title"
     , "description"
     , "price"
     , "condition"
@@ -174,6 +190,14 @@ fetch = do
   (id, fmt) <- getArg
   r <- dbGet (table ctg) "*" id
   writeBS $ showBS r -- Needs correct formatting.
+
+fetchComments = do
+  ctg <- getCategory
+  id <- getJustParam "id"
+  (x, fmt) <- getArg
+  svAssert (x == "comments") "wut"
+  r <- dbGet (table ctg) "replies" id
+  writeBS $ showBS r
 
 search = undefined
 --
@@ -213,7 +237,7 @@ editField = do
   (ctg, id, nick) <- getTheGist
   let flds = columns ctg
   fld <- unpack . getJustParam "fld"
-  assertM (elem fld flds)
+  rqAssert (elem fld flds) "Field does not exist."
   val <- getJustParam fld
   permit ctg id nick
   dbUpdate (table ctg) [fld] [val] id
@@ -237,7 +261,8 @@ site =
       , ("styles", fileServe "styles")
       , ("signup", fileServeSingle "pages/signup.html")
       , (":ctg/:arg", fetch)
---      , (":ctg", search)
+      , (":ctg/:id/:arg", fetchComments)
+      , (":ctg", search)
       ]) <|>
   method POST  -- Create.
     (route
