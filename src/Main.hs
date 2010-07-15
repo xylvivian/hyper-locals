@@ -34,43 +34,45 @@ unpack = B.unpack
 
 showBS = pack . show
 
-snapAssert n s x t = if x
-  then return ()
-  else do
-    putResponse $ setResponseStatus n s emptyResponse
-    writeBS t
-    getResponse >>= finishWith
+codeString 400 = "Bad Request"
+codeString 500 = "Internal Server Error"
 
-svAssert = snapAssert 500 "Internal Server Error"
+snapError n t = do
+  putResponse $ setResponseStatus n (codeString n) emptyResponse
+  writeBS $ pack t
+  getResponse >>= finishWith
+  return undefined
 
-rqAssert = snapAssert 400 "Bad Request"
+snapAssert n t x
+  | x = return ()
+  | True = snapError n t
 
-errorHead s [] = error s
-errorHead _ (x : _) = x
+snapHead n t [] = snapError n t
+snapHead _ _ (x : _) = return x
 
-errorTail s [] = error s
-errorTail _ (_ : xs) = xs
+snapTail n t [] = snapError n t
+snapTail _ _ (_ : xs) = return xs
 
-errorJust s Nothing = error s
-errorJust _ (Just x) = x
+snapJust n t Nothing = snapError n t
+snapJust _ _ (Just x) = return x
 
-getJustParam n = errorJust ("Could not get parameter: " ++ n) .
-  getParam (pack n)
+getJustParam n = getParam (pack n) >>=
+  snapJust 400 ("Could not get parameter: " ++ n)
 
 getJustParams = mapM getJustParam
 
 getCategory = readCategory . getJustParam "ctg"
 
-getArg = (errorTail "No format specified." .) .
+getArg = (snapTail 400 "No format specified." .) .
   break (== '.') .
-  unpack .
-  getJustParam "arg"
+  unpack . getJustParam "arg"
 
-getCookieValue n = cookieValue .
-  errorHead ("Could not get cookie: " ++ n) .
+getCookieValue n =
   filter ((== pack n) . cookieName) .
-  rqCookies .
-  getRequest
+  rqCookies . getRequest >>=
+  (cookieValue .) .
+  snapHead 400 ("Could not get cookie: " ++ n)
+
 --
 
 -- Database functions:
@@ -78,13 +80,15 @@ commafy = concat . L.intersperse ", "
 
 tuplify xs = "(" ++ commafy xs ++ ")"
 
-dbFunc f cmd = liftIO . handleSql (\e -> do
-  putStrLn "what the fuck"
-  return undefined) . f ?db cmd . map toSql
+dbFunc f c xs = do
+  r <- liftIO $ handleSql (return . Left) $ Right . f ?db c (map toSql xs)
+  case r of
+    Left e -> snapError 500 $ show e
+    Right v -> return v
 
 dbRun cmd vals = do
   r <- dbFunc run cmd vals
-  svAssert (r >= 1) "Database transaction failed."
+  snapAssert 500 "Database transaction failed." (r >= 1)
   liftIO $ commit ?db
 
 dbQuery = dbFunc quickQuery'
@@ -93,7 +97,8 @@ dbSelect tbl x i = dbQuery
   ( "SELECT " ++ x ++ " FROM " ++ tbl ++
     " WHERE " ++ i )
 
-dbGet tbl x id = errorHead "Does not exist." .
+dbGet tbl x id =
+  snapHead 500 "Does not exist." =<<
   dbSelect tbl x "id = ?" [id]
 
 dbInsert tbl flds = dbRun
@@ -113,20 +118,20 @@ dbDelete tbl id = dbRun
   ) [id]
 
 permit ctg id nick = do
-  poster <- dbGet (table ctg) "poster" id
-  rqAssert
-    ( ( ctg == User &&
-        nick == id ) ||
-      ( ctg /= User &&
-        nick == fromSql (errorHead "No 'poster' field." poster) )
-    ) "Operation not permitted."
+  poster <- snapHead 500 "No 'poster' field." =<<
+    dbGet (table ctg) "poster" id
+  snapAssert 400 "Operation not permitted."
+    ((ctg == User &&
+      nick == id) ||
+     (ctg /= User &&
+      nick == fromSql poster))
 
 identify = do
   nick <- getCookieValue "nick"
   pass <- getCookieValue "pass"
   [id, password] <- dbGet "users" "(id, password)" nick
-  rqAssert (fromSql id /= nick || fromSql password /= pass)
-    "Identification failed."
+  snapAssert 400 "Identification failed."
+    (fromSql id /= nick || fromSql password /= pass)
   return nick
 
 getTheGist = do
@@ -195,7 +200,7 @@ fetchComments = do
   ctg <- getCategory
   id <- getJustParam "id"
   (x, fmt) <- getArg
-  svAssert (x == "comments") "wut"
+  snapAssert 500 "This should never be printed." (x == "comments")
   r <- dbGet (table ctg) "replies" id
   writeBS $ showBS r
 
@@ -217,7 +222,9 @@ create = do
 comment = do
   (ctg, id, nick) <- getTheGist
   content <- getJustParam "content"
-  (ix :: Int) <- succ . fromSql . errorHead "Missing field: replies" . dbGet (table ctg) "array_length(replies, 1)" id
+  (ix :: Int) <- succ . fromSql .
+    (snapHead 500 "Missing field: replies" =<<
+    dbGet (table ctg) "array_length(replies, 1)" id)
   dbUpdate (table ctg)
     ["replies[" ++ show ix ++ "]"]
     [tuplify [show nick, "now", show content]] $ unpack id
@@ -237,7 +244,7 @@ editField = do
   (ctg, id, nick) <- getTheGist
   let flds = columns ctg
   fld <- unpack . getJustParam "fld"
-  rqAssert (elem fld flds) "Field does not exist."
+  snapAssert 400 "Field does not exist." (elem fld flds)
   val <- getJustParam fld
   permit ctg id nick
   dbUpdate (table ctg) [fld] [val] id
